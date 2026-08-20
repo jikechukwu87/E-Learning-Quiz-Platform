@@ -293,6 +293,13 @@ textarea {
   margin-top: 10px;
 }
 
+.subject-lock-note {
+  margin: -4px 0 0;
+  padding: 0.65rem 0.75rem;
+  border-left: 3px solid #7c3aed;
+  background: #f5f3ff;
+}
+
 .mini-list,
 .list-stack,
 .quiz-stack {

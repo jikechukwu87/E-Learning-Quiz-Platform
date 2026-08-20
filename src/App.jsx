@@ -185,7 +185,7 @@ const buildQuestionFromRow = (row, teacherId) => {
   return {
     id: createId('question'),
     teacherId,
-    quizName: String(row.quizName ?? row.groupName ?? row.subject ?? 'General quiz').trim(),
+    subject: String(row.subject ?? row.quizName ?? row.groupName ?? 'General quiz').trim(),
     quizTimed: Boolean(row.quizTimed === true || row.timed === true || row.duration),
     quizDuration: Number(row.quizDuration ?? row.duration ?? 0) || 0,
     prompt: String(row.question).trim(),
@@ -195,7 +195,7 @@ const buildQuestionFromRow = (row, teacherId) => {
 }
 
 const emptyQuestionForm = {
-  quizName: '',
+  subject: '',
   quizTimed: false,
   quizDuration: 30,
   prompt: '',
@@ -434,6 +434,14 @@ function App() {
   const teacherQuestions = useMemo(
     () => state.questions.filter((question) => question.teacherId === currentTeacher?.id),
     [currentTeacher, state.questions],
+  )
+
+  const selectedSubjectQuestion = useMemo(
+    () => teacherQuestions.find(
+      (question) => (question.subject || question.quizName || '').trim().toLowerCase()
+        === questionForm.subject.trim().toLowerCase(),
+    ),
+    [questionForm.subject, teacherQuestions],
   )
 
   const teacherResults = useMemo(
@@ -705,20 +713,30 @@ function App() {
 
   const handleQuestionAdd = async (event) => {
     event.preventDefault()
-    const quizName = questionForm.quizName.trim()
+    const subject = questionForm.subject.trim()
     const trimmedPrompt = questionForm.prompt.trim()
     const validOptions = questionForm.options.map((option) => option.trim()).filter(Boolean)
 
-    if (!quizName || !trimmedPrompt || validOptions.length < 2) {
+    if (!subject || !trimmedPrompt || validOptions.length < 2) {
       return
     }
+
+    const existingSubjectQuestion = teacherQuestions.find(
+      (question) => (question.subject || question.quizName || '').trim().toLowerCase() === subject.toLowerCase(),
+    )
+    const subjectTimed = existingSubjectQuestion
+      ? Boolean(existingSubjectQuestion.subjectTimed ?? existingSubjectQuestion.quizTimed ?? existingSubjectQuestion.isTimed)
+      : questionForm.subjectTimed
+    const subjectDuration = existingSubjectQuestion
+      ? Number(existingSubjectQuestion.subjectDuration ?? existingSubjectQuestion.quizDuration ?? existingSubjectQuestion.timeLimit) || 0
+      : (subjectTimed ? Number(questionForm.subjectDuration) || 0 : 0)
 
     const finalQuestion = {
       id: createId('question'),
       teacherId: currentTeacher?.id,
-      quizName,
-      quizTimed: questionForm.quizTimed,
-      quizDuration: questionForm.quizTimed ? Number(questionForm.quizDuration) || 0 : 0,
+      subject,
+      subjectTimed,
+      subjectDuration,
       prompt: trimmedPrompt,
       options: validOptions.slice(0, 4),
       correctIndex: Math.min(questionForm.correctIndex, validOptions.length - 1),
@@ -728,9 +746,9 @@ function App() {
       try {
         const questionPayload = {
           teacherId: currentTeacher.id,
-          quizName: finalQuestion.quizName,
-          quizTimed: finalQuestion.quizTimed,
-          quizDuration: finalQuestion.quizDuration,
+          subject: finalQuestion.subject,
+          subjectTimed: finalQuestion.subjectTimed,
+          subjectDuration: finalQuestion.subjectDuration,
           prompt: finalQuestion.prompt,
           options: finalQuestion.options,
           correctIndex: finalQuestion.correctIndex,
@@ -1194,11 +1212,11 @@ function App() {
                     <h3>Question builder</h3>
                     <form className="form-card" onSubmit={handleQuestionAdd}>
                       <label>
-                        Quiz group name
+                        Subject
                         <input
-                          value={questionForm.quizName}
+                          value={questionForm.subject}
                           onChange={(event) =>
-                            setQuestionForm((previous) => ({ ...previous, quizName: event.target.value }))
+                            setQuestionForm((previous) => ({ ...previous, subject: event.target.value }))
                           }
                           placeholder="Economics, Agric, English Language"
                         />
@@ -1208,30 +1226,39 @@ function App() {
                         <label className="checkbox-row">
                           <input
                             type="checkbox"
-                            checked={questionForm.quizTimed}
+                            checked={questionForm.subjectTimed}
                             onChange={(event) =>
-                              setQuestionForm((previous) => ({ ...previous, quizTimed: event.target.checked }))
+                              setQuestionForm((previous) => ({ ...previous, subjectTimed: event.target.checked }))
                             }
                           />
                           Timed quiz group
                         </label>
-                        {questionForm.quizTimed && (
+                        {questionForm.subjectTimed && (
                           <label>
                             Group time limit (minutes)
                             <input
                               type="number"
                               min="1"
-                              value={questionForm.quizDuration}
+                              value={questionForm.subjectDuration}
                               onChange={(event) =>
                                 setQuestionForm((previous) => ({
                                   ...previous,
-                                  quizDuration: Number(event.target.value),
+                                  subjectDuration: Number(event.target.value),
                                 }))
                               }
                             />
                           </label>
                         )}
                       </div>
+                      {selectedSubjectQuestion && (
+                        <p className="helper-text subject-lock-note">
+                          This subject already has a shared timing policy. New questions will use
+                          {` ${selectedSubjectQuestion.subjectTimed ?? selectedSubjectQuestion.quizTimed ?? selectedSubjectQuestion.isTimed ? 'the timed' : 'the untimed'}`}
+                          {selectedSubjectQuestion.subjectTimed ?? selectedSubjectQuestion.quizTimed ?? selectedSubjectQuestion.isTimed
+                            ? ` ${selectedSubjectQuestion.subjectDuration || selectedSubjectQuestion.quizDuration || selectedSubjectQuestion.timeLimit} minute limit.`
+                            : ' policy.'}
+                        </p>
+                      )}
 
                       <label>
                         Question prompt
@@ -1296,11 +1323,11 @@ function App() {
                     <div className="mini-list">
                       {teacherQuestions.map((question) => (
                         <div key={question.id} className="mini-card">
-                          <strong>{question.quizName || 'General quiz'} · {question.prompt}</strong>
+                          <strong>{question.subject || question.quizName || 'General quiz'} · {question.prompt}</strong>
                           <span>
-                            {question.quizTimed ?? question.isTimed
-                              ? `Group timed • ${question.quizDuration || question.timeLimit} mins`
-                              : 'Group untimed'}
+                            {(question.subjectTimed ?? question.quizTimed ?? question.isTimed)
+                              ? `Subject timed • ${question.subjectDuration || question.quizDuration || question.timeLimit} mins`
+                              : 'Subject untimed'}
                           </span>
                         </div>
                       ))}
@@ -1438,11 +1465,11 @@ function App() {
                   return (
                     <article key={question.id} className="quiz-card panel">
                       <div className="question-meta">
-                        <span>{question.quizName || 'General quiz'} · Question {index + 1}</span>
+                        <span>{question.subject || question.quizName || 'General quiz'} · Question {index + 1}</span>
                         <span>
-                          {question.quizTimed ?? question.isTimed
-                            ? `Group timed • ${question.quizDuration || question.timeLimit} mins`
-                            : 'Group untimed'}
+                          {(question.subjectTimed ?? question.quizTimed ?? question.isTimed)
+                            ? `Subject timed • ${question.subjectDuration || question.quizDuration || question.timeLimit} mins`
+                            : 'Subject untimed'}
                         </span>
                       </div>
                       <h3>{question.prompt}</h3>
