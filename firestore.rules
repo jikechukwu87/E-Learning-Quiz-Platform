@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function authenticated() {
+      return request.auth != null;
+    }
+
+    function isTeacher() {
+      return authenticated()
+        && exists(/databases/$(database)/documents/teachers/$(request.auth.uid));
+    }
+
+    function isStudent() {
+      return authenticated()
+        && exists(/databases/$(database)/documents/students/$(request.auth.uid));
+    }
+
+    function teacherOwns(data) {
+      return isTeacher() && data.teacherId == request.auth.uid;
+    }
+
+    match /teachers/{teacherId} {
+      allow create: if authenticated() && request.auth.uid == teacherId;
+      allow read, update: if authenticated() && request.auth.uid == teacherId;
+      allow delete: if false;
+    }
+
+    match /students/{studentId} {
+      // The app creates the Auth user first, then the teacher creates this profile.
+      allow create: if teacherOwns(request.resource.data)
+        && request.resource.data.uid == studentId;
+      allow read: if (isStudent() && request.auth.uid == studentId)
+        || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow update: if (isStudent() && request.auth.uid == studentId)
+        || (isTeacher() && resource.data.teacherId == request.auth.uid);
+      allow delete: if isTeacher() && resource.data.teacherId == request.auth.uid;
+    }
+
+    match /questions/{questionId} {
+      allow read: if teacherOwns(resource.data)
+        || (isStudent()
+          && resource.data.teacherId == get(
+            /databases/$(database)/documents/students/$(request.auth.uid)
+          ).data.teacherId);
+      allow create: if teacherOwns(request.resource.data);
+      allow update, delete: if teacherOwns(resource.data);
+    }
+
+    match /results/{resultId} {
+      allow create: if isStudent()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.teacherId == get(
+          /databases/$(database)/documents/students/$(request.auth.uid)
+        ).data.teacherId;
+      allow read: if authenticated()
+        && (request.auth.uid == resource.data.teacherId
+          || request.auth.uid == resource.data.studentId);
+      allow update, delete: if false;
+    }
+  }
+}
