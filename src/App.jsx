@@ -186,8 +186,8 @@ const buildQuestionFromRow = (row, teacherId) => {
     id: createId('question'),
     teacherId,
     subject: String(row.subject ?? row.quizName ?? row.groupName ?? 'General quiz').trim(),
-    quizTimed: Boolean(row.quizTimed === true || row.timed === true || row.duration),
-    quizDuration: Number(row.quizDuration ?? row.duration ?? 0) || 0,
+    subjectTimed: Boolean(row.subjectTimed === true || row.quizTimed === true || row.timed === true || row.duration),
+    subjectDuration: Number(row.subjectDuration ?? row.quizDuration ?? row.duration ?? 0) || 0,
     prompt: String(row.question).trim(),
     options: optionValues.slice(0, 4).map((value) => String(value).trim()),
     correctIndex: Math.min(correctIndex, optionValues.length - 1),
@@ -196,8 +196,8 @@ const buildQuestionFromRow = (row, teacherId) => {
 
 const emptyQuestionForm = {
   subject: '',
-  quizTimed: false,
-  quizDuration: 30,
+  subjectTimed: false,
+  subjectDuration: 30,
   prompt: '',
   options: ['', '', '', ''],
   correctIndex: 0,
@@ -228,6 +228,8 @@ function App() {
     getStoredState().teachers[0]?.id || '',
   )
   const [questionForm, setQuestionForm] = useState(emptyQuestionForm)
+  const [questionSaveError, setQuestionSaveError] = useState('')
+  const [questionSaveSuccess, setQuestionSaveSuccess] = useState('')
   const [studentLogin, setStudentLogin] = useState({ email: '', password: '' })
   const [studentAuthError, setStudentAuthError] = useState('')
   const [studentAuthSuccess, setStudentAuthSuccess] = useState('')
@@ -713,6 +715,8 @@ function App() {
 
   const handleQuestionAdd = async (event) => {
     event.preventDefault()
+    setQuestionSaveError('')
+    setQuestionSaveSuccess('')
     const subject = questionForm.subject.trim()
     const trimmedPrompt = questionForm.prompt.trim()
     const validOptions = questionForm.options.map((option) => option.trim()).filter(Boolean)
@@ -766,6 +770,8 @@ function App() {
         return
       } catch (error) {
         console.error('Question creation failed:', error)
+        setQuestionSaveError(getAuthErrorMessage(error, 'Question could not be saved.'))
+        return
       }
     }
 
@@ -782,23 +788,75 @@ function App() {
       return
     }
 
-    const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
-    const sheet = workbook.Sheets[workbook.SheetNames[0]]
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+    setQuestionSaveError('')
+    setQuestionSaveSuccess('')
 
-    const importedQuestions = rows
-      .map((row) => buildQuestionFromRow(row, currentTeacher.id))
-      .filter(Boolean)
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+      const sheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+      const importedQuestions = rows
+        .map((row) => buildQuestionFromRow(row, currentTeacher.id))
+        .filter(Boolean)
 
-    if (!importedQuestions.length) {
-      return
+      if (!importedQuestions.length) {
+        setQuestionSaveError('No valid questions found. Include question, optionA, and optionB columns.')
+        return
+      }
+
+      const subjectPolicies = new Map(
+        teacherQuestions.map((question) => [
+          (question.subject || question.quizName || 'General quiz').trim().toLowerCase(),
+          {
+            subjectTimed: Boolean(question.subjectTimed ?? question.quizTimed ?? question.isTimed),
+            subjectDuration: Number(question.subjectDuration ?? question.quizDuration ?? question.timeLimit) || 0,
+          },
+        ]),
+      )
+      const normalizedQuestions = importedQuestions.map((question) => {
+        const subjectKey = question.subject.trim().toLowerCase()
+        const policy = subjectPolicies.get(subjectKey) || {
+          subjectTimed: question.subjectTimed,
+          subjectDuration: question.subjectDuration,
+        }
+        subjectPolicies.set(subjectKey, policy)
+        return { ...question, ...policy }
+      })
+
+      if (isFirebaseReady) {
+        const storedQuestions = []
+        for (const question of normalizedQuestions) {
+          const questionPayload = {
+            teacherId: currentTeacher.id,
+            subject: question.subject,
+            subjectTimed: question.subjectTimed,
+            subjectDuration: question.subjectTimed ? question.subjectDuration : 0,
+            prompt: question.prompt,
+            options: question.options,
+            correctIndex: question.correctIndex,
+            createdAt: new Date().toISOString(),
+          }
+          const questionRef = await addDoc(collection(db, 'questions'), questionPayload)
+          storedQuestions.push({ id: questionRef.id, ...questionPayload })
+        }
+
+        setState((previous) => ({
+          ...previous,
+          questions: [...previous.questions, ...storedQuestions],
+        }))
+      } else {
+        setState((previous) => ({
+          ...previous,
+          questions: [...previous.questions, ...normalizedQuestions],
+        }))
+      }
+
+      setQuestionSaveSuccess(`${normalizedQuestions.length} question${normalizedQuestions.length === 1 ? '' : 's'} imported and saved successfully.`)
+      event.target.value = ''
+    } catch (error) {
+      console.error('Excel question import failed:', error)
+      setQuestionSaveError(getAuthErrorMessage(error, 'Questions were parsed but could not be saved to Firestore.'))
     }
-
-    setState((previous) => ({
-      ...previous,
-      questions: [...previous.questions, ...importedQuestions],
-    }))
-    event.target.value = ''
   }
 
   const handleStudentLogin = async (event) => {
@@ -1307,6 +1365,9 @@ function App() {
                         </label>
                       </div>
 
+                      {questionSaveError && <p className="auth-error">{questionSaveError}</p>}
+                      {questionSaveSuccess && <p className="auth-success">{questionSaveSuccess}</p>}
+
                       <button type="submit">Save question</button>
                     </form>
                   </div>
@@ -1318,8 +1379,11 @@ function App() {
                       <input type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelUpload} />
                     </label>
                     <p className="helper-text">
-                      Use columns named question, optionA, optionB, optionC, optionD, and correctAnswer.
+                      Use columns named subject, subjectTimed, subjectDuration, question, optionA, optionB,
+                      optionC, optionD, and correctAnswer.
                     </p>
+                    {questionSaveError && <p className="auth-error">{questionSaveError}</p>}
+                    {questionSaveSuccess && <p className="auth-success">{questionSaveSuccess}</p>}
                     <div className="mini-list">
                       {teacherQuestions.map((question) => (
                         <div key={question.id} className="mini-card">
