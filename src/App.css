@@ -180,6 +180,55 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.auth-panel {
+  width: min(100%, 560px);
+  margin: 0 auto;
+  grid-column: 1 / -1;
+}
+
+.auth-panel-header {
+  margin-bottom: 22px;
+}
+
+.auth-panel-header h2 {
+  margin-bottom: 6px;
+}
+
+.auth-panel-header p:last-child {
+  margin-bottom: 0;
+  color: #6b7280;
+}
+
+.auth-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 22px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #f1f3f4;
+}
+
+.auth-toggle button {
+  width: 100%;
+  justify-self: stretch;
+  background: transparent;
+  color: #6b7280;
+  box-shadow: none;
+}
+
+.auth-toggle button:hover {
+  background: #e3e8eb;
+  color: #183247;
+  box-shadow: none;
+  transform: none;
+}
+
+.auth-toggle button.active {
+  background: #183247;
+  color: #fff;
+}
+
 .form-card {
   display: grid;
   gap: 14px;

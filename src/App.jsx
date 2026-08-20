@@ -165,17 +165,41 @@ const parseBooleanCell = (value) => {
   return ['true', 'yes', '1', 'timed'].includes(String(value ?? '').trim().toLowerCase())
 }
 
+const normalizeExcelRow = (row) => Object.fromEntries(
+  Object.entries(row).map(([key, value]) => [
+    key.replace(/\s+/g, '').replace(/[_-]/g, '').toLowerCase(),
+    value,
+  ]),
+)
+
+const getExcelCell = (row, ...keys) => {
+  for (const key of keys) {
+    const value = row[key.replace(/\s+/g, '').replace(/[_-]/g, '').toLowerCase()]
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value
+    }
+  }
+  return ''
+}
+
+const parseDurationCell = (value) => {
+  const match = String(value ?? '').match(/\d+(?:\.\d+)?/)
+  return match ? Number(match[0]) : 0
+}
+
 const buildQuestionFromRow = (row, teacherId) => {
-  const optionValues = ['optionA', 'optionB', 'optionC', 'optionD']
-    .map((key) => row[key])
+  const normalizedRow = normalizeExcelRow(row)
+  const optionValues = ['optiona', 'optionb', 'optionc', 'optiond']
+    .map((key) => normalizedRow[key])
     .filter((value) => value !== undefined && value !== null && String(value).trim() !== '')
 
-  if (!row.question || optionValues.length < 2) {
+  const prompt = getExcelCell(normalizedRow, 'question', 'questionText', 'prompt')
+  if (!prompt || optionValues.length < 2) {
     return null
   }
 
-  let correctIndex = Number(row.correctIndex ?? row.answerIndex ?? row.correctAnswer ?? 0)
-  const correctKey = String(row.correctAnswerText ?? row.answer ?? '').trim().toLowerCase()
+  let correctIndex = Number(getExcelCell(normalizedRow, 'correctIndex', 'answerIndex') || 0)
+  const correctKey = String(getExcelCell(normalizedRow, 'correctAnswerText', 'correctAnswer', 'answer')).trim().toLowerCase()
 
   if (correctKey) {
     const matchedIndex = optionValues.findIndex(
@@ -193,11 +217,11 @@ const buildQuestionFromRow = (row, teacherId) => {
   return {
     id: createId('question'),
     teacherId,
-    subject: String(row.subject ?? row.quizName ?? row.groupName ?? 'General quiz').trim(),
-    subjectTimed: parseBooleanCell(row.subjectTimed ?? row.quizTimed ?? row.timed)
-      || Number(row.subjectDuration ?? row.quizDuration ?? row.duration ?? 0) > 0,
-    subjectDuration: Number(row.subjectDuration ?? row.quizDuration ?? row.duration ?? 0) || 0,
-    prompt: String(row.question).trim(),
+    subject: String(getExcelCell(normalizedRow, 'subject', 'subjectName', 'quizName', 'groupName', 'category') || 'General quiz').trim(),
+    subjectTimed: parseBooleanCell(getExcelCell(normalizedRow, 'subjectTimed', 'quizTimed', 'isTimed', 'timed'))
+      || parseDurationCell(getExcelCell(normalizedRow, 'subjectDuration', 'quizDuration', 'duration', 'timeLimit')) > 0,
+    subjectDuration: parseDurationCell(getExcelCell(normalizedRow, 'subjectDuration', 'quizDuration', 'duration', 'timeLimit')),
+    prompt: String(prompt).trim(),
     options: optionValues.slice(0, 4).map((value) => String(value).trim()),
     correctIndex: Math.min(correctIndex, optionValues.length - 1),
   }
@@ -222,6 +246,7 @@ function App() {
     school: '',
   })
   const [teacherLogin, setTeacherLogin] = useState({ email: '', password: '' })
+  const [teacherAuthMode, setTeacherAuthMode] = useState('login')
   const [teacherAuthError, setTeacherAuthError] = useState('')
   const [teacherAuthSuccess, setTeacherAuthSuccess] = useState('')
   const [teacherSession, setTeacherSession] = useState(getStoredTeacherSession)
@@ -1148,9 +1173,38 @@ function App() {
       {activeView === 'teacher' && (
         <main className="dashboard-grid">
           {!teacherSession ? (
-            <>
-              <section className="panel">
-                <h2>Teacher login</h2>
+            <section className="panel auth-panel">
+              <div className="auth-panel-header">
+                <p className="eyebrow">Teacher workspace</p>
+                <h2>{teacherAuthMode === 'login' ? 'Welcome back' : 'Create your teacher account'}</h2>
+                <p>{teacherAuthMode === 'login' ? 'Sign in to manage your classes and questions.' : 'Set up your teaching workspace in a few steps.'}</p>
+              </div>
+              <div className="auth-toggle" role="tablist" aria-label="Teacher authentication mode">
+                <button
+                  type="button"
+                  className={teacherAuthMode === 'login' ? 'active' : ''}
+                  onClick={() => {
+                    setTeacherAuthMode('login')
+                    setTeacherAuthError('')
+                    setTeacherAuthSuccess('')
+                  }}
+                >
+                  Login
+                </button>
+                <button
+                  type="button"
+                  className={teacherAuthMode === 'register' ? 'active' : ''}
+                  onClick={() => {
+                    setTeacherAuthMode('register')
+                    setTeacherAuthError('')
+                    setTeacherAuthSuccess('')
+                  }}
+                >
+                  Register
+                </button>
+              </div>
+
+              {teacherAuthMode === 'login' ? (
                 <form className="form-card" onSubmit={handleTeacherLogin}>
                   <label>
                     Email
@@ -1177,10 +1231,7 @@ function App() {
                   {teacherAuthError && <p className="auth-error">{teacherAuthError}</p>}
                   <button type="submit">Login as teacher</button>
                 </form>
-              </section>
-
-              <section className="panel">
-                <h2>Teacher registration</h2>
+              ) : (
                 <form className="form-card" onSubmit={handleTeacherRegister}>
                   <label>
                     Full name
@@ -1227,8 +1278,8 @@ function App() {
                   {teacherAuthError && <p className="auth-error">{teacherAuthError}</p>}
                   <button type="submit">Register teacher</button>
                 </form>
-              </section>
-            </>
+              )}
+            </section>
           ) : (
             <>
               <section className="panel dashboard-intro panel-wide">
