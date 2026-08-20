@@ -157,6 +157,14 @@ const getAuthErrorMessage = (error, fallback) => {
   return messages[error?.code] || error?.message || fallback
 }
 
+const parseBooleanCell = (value) => {
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  return ['true', 'yes', '1', 'timed'].includes(String(value ?? '').trim().toLowerCase())
+}
+
 const buildQuestionFromRow = (row, teacherId) => {
   const optionValues = ['optionA', 'optionB', 'optionC', 'optionD']
     .map((key) => row[key])
@@ -186,7 +194,8 @@ const buildQuestionFromRow = (row, teacherId) => {
     id: createId('question'),
     teacherId,
     subject: String(row.subject ?? row.quizName ?? row.groupName ?? 'General quiz').trim(),
-    subjectTimed: Boolean(row.subjectTimed === true || row.quizTimed === true || row.timed === true || row.duration),
+    subjectTimed: parseBooleanCell(row.subjectTimed ?? row.quizTimed ?? row.timed)
+      || Number(row.subjectDuration ?? row.quizDuration ?? row.duration ?? 0) > 0,
     subjectDuration: Number(row.subjectDuration ?? row.quizDuration ?? row.duration ?? 0) || 0,
     prompt: String(row.question).trim(),
     options: optionValues.slice(0, 4).map((value) => String(value).trim()),
@@ -236,6 +245,10 @@ function App() {
   const [studentLoginLoading, setStudentLoginLoading] = useState(false)
   const [studentSession, setStudentSession] = useState(getStoredStudentSession)
   const studentProvisioningRef = useRef(false)
+  const submitExamRef = useRef(null)
+  const examSubmittedRef = useRef(false)
+  const [activeSubject, setActiveSubject] = useState('')
+  const [examTimeRemaining, setExamTimeRemaining] = useState(null)
   const [answers, setAnswers] = useState({})
   const [submissionSummary, setSubmissionSummary] = useState(null)
 
@@ -451,15 +464,77 @@ function App() {
     [currentTeacher, state.results],
   )
 
-  const studentQuestions = useMemo(
+  const studentAvailableQuestions = useMemo(
     () => state.questions.filter((question) => question.teacherId === studentSession?.teacherId),
     [state.questions, studentSession],
+  )
+
+  const studentSubjects = useMemo(
+    () => [...new Set(studentAvailableQuestions.map((question) => question.subject || question.quizName || 'General quiz'))],
+    [studentAvailableQuestions],
+  )
+
+  const studentQuestions = useMemo(
+    () => studentAvailableQuestions.filter(
+      (question) => (question.subject || question.quizName || 'General quiz') === (activeSubject || studentSubjects[0]),
+    ),
+    [activeSubject, studentAvailableQuestions, studentSubjects],
+  )
+
+  const activeSubjectSettings = studentQuestions[0]
+  const activeSubjectTimed = Boolean(
+    activeSubjectSettings?.subjectTimed ?? activeSubjectSettings?.quizTimed ?? activeSubjectSettings?.isTimed,
+  )
+  const activeSubjectDuration = Number(
+    activeSubjectSettings?.subjectDuration
+      ?? activeSubjectSettings?.quizDuration
+      ?? activeSubjectSettings?.timeLimit
+      ?? 0,
   )
 
   const answeredCount = studentQuestions.filter((question) => answers[question.id] !== undefined).length
   const progressPercentage = studentQuestions.length
     ? Math.round((answeredCount / studentQuestions.length) * 100)
     : 0
+
+  useEffect(() => {
+    if (!studentSubjects.length) {
+      setActiveSubject('')
+      return
+    }
+
+    if (!activeSubject || !studentSubjects.includes(activeSubject)) {
+      setActiveSubject(studentSubjects[0])
+    }
+  }, [activeSubject, studentSubjects])
+
+  useEffect(() => {
+    if (!studentSession || !activeSubject || !activeSubjectTimed || activeSubjectDuration <= 0) {
+      setExamTimeRemaining(null)
+      return undefined
+    }
+
+    setExamTimeRemaining(activeSubjectDuration * 60)
+    setAnswers({})
+    setSubmissionSummary(null)
+    examSubmittedRef.current = false
+
+    const timer = window.setInterval(() => {
+      setExamTimeRemaining((remaining) => {
+        if (remaining === null || remaining <= 1 || examSubmittedRef.current) {
+          window.clearInterval(timer)
+          if (!examSubmittedRef.current) {
+            examSubmittedRef.current = true
+            submitExamRef.current?.()
+          }
+          return 0
+        }
+        return remaining - 1
+      })
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [activeSubject, activeSubjectDuration, activeSubjectTimed, studentSession])
 
   const handleTeacherRegister = async (event) => {
     event.preventDefault()
@@ -943,6 +1018,8 @@ function App() {
       return
     }
 
+    examSubmittedRef.current = true
+
     const total = studentQuestions.length
     const score = studentQuestions.reduce((count, question) => {
       return count + (answers[question.id] === question.correctIndex ? 1 : 0)
@@ -985,6 +1062,8 @@ function App() {
     }))
     setSubmissionSummary({ score, total })
   }
+
+  submitExamRef.current = handleSubmission
 
   return (
     <div className="app-shell">
@@ -1508,6 +1587,28 @@ function App() {
                 <article className="stat-card"><span>Questions</span><strong>{studentQuestions.length}</strong><small>available today</small></article>
                 <article className="stat-card"><span>Answered</span><strong>{answeredCount}</strong><small>of {studentQuestions.length || 0} completed</small></article>
                 <article className="stat-card"><span>Progress</span><strong>{progressPercentage}%</strong><small>current completion</small></article>
+              </section>
+
+              <section className="panel exam-controls">
+                <label>
+                  Subject examination
+                  <select
+                    value={activeSubject}
+                    onChange={(event) => setActiveSubject(event.target.value)}
+                  >
+                    {studentSubjects.map((subject) => (
+                      <option key={subject} value={subject}>{subject}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className={activeSubjectTimed ? 'exam-timer timed' : 'exam-timer'}>
+                  <span>{activeSubjectTimed ? 'Time remaining' : 'Timing'}</span>
+                  <strong>
+                    {activeSubjectTimed && examTimeRemaining !== null
+                      ? `${Math.floor(examTimeRemaining / 60).toString().padStart(2, '0')}:${(examTimeRemaining % 60).toString().padStart(2, '0')}`
+                      : 'Untimed examination'}
+                  </strong>
+                </div>
               </section>
 
               <section className="panel">
