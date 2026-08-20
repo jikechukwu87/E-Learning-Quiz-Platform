@@ -30,9 +30,9 @@ service cloud.firestore {
       // The app creates the Auth user first, then the teacher creates this profile.
       allow create: if teacherOwns(request.resource.data)
         && request.resource.data.uid == studentId;
-      allow read: if (isStudent() && request.auth.uid == studentId)
+      allow read: if (authenticated() && request.auth.uid == studentId)
         || (isTeacher() && resource.data.teacherId == request.auth.uid);
-      allow update: if (isStudent() && request.auth.uid == studentId)
+      allow update: if (authenticated() && request.auth.uid == studentId)
         || (isTeacher() && resource.data.teacherId == request.auth.uid);
       allow delete: if isTeacher() && resource.data.teacherId == request.auth.uid;
     }

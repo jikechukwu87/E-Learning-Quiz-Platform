@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { addDoc, collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore'
 import * as XLSX from 'xlsx'
@@ -212,6 +212,7 @@ function App() {
   })
   const [teacherLogin, setTeacherLogin] = useState({ email: '', password: '' })
   const [teacherAuthError, setTeacherAuthError] = useState('')
+  const [teacherAuthSuccess, setTeacherAuthSuccess] = useState('')
   const [teacherSession, setTeacherSession] = useState(getStoredTeacherSession)
   const [studentForm, setStudentForm] = useState({
     fullName: '',
@@ -227,8 +228,10 @@ function App() {
   const [questionForm, setQuestionForm] = useState(emptyQuestionForm)
   const [studentLogin, setStudentLogin] = useState({ email: '', password: '' })
   const [studentAuthError, setStudentAuthError] = useState('')
+  const [studentAuthSuccess, setStudentAuthSuccess] = useState('')
   const [studentLoginLoading, setStudentLoginLoading] = useState(false)
   const [studentSession, setStudentSession] = useState(getStoredStudentSession)
+  const studentProvisioningRef = useRef(false)
   const [answers, setAnswers] = useState({})
   const [submissionSummary, setSubmissionSummary] = useState(null)
 
@@ -287,8 +290,15 @@ function App() {
         return
       }
 
+      if (studentProvisioningRef.current) {
+        console.log('[STUDENT AUTH SYNC] Skipping profile read while teacher provisions student:', user.uid)
+        return
+      }
+
       try {
+        console.log('[STUDENT AUTH SYNC] Reading student profile:', `students/${user.uid}`)
         const studentSnapshot = await getDoc(doc(studentDb, 'students', user.uid))
+        console.log('[STUDENT AUTH SYNC] Student profile read completed:', studentSnapshot.exists())
         if (!studentSnapshot.exists()) {
           await signOut(studentAuth)
           setStudentSession(null)
@@ -312,17 +322,60 @@ function App() {
     }
 
     const loadTeacherFirestoreData = async () => {
+      const teacherId = teacherSession.id
+      console.log('[TEACHER REFRESH] Starting dashboard refresh')
+      console.log('[TEACHER REFRESH] Teacher session UID:', teacherId)
+      console.log('[TEACHER REFRESH] Firebase primary UID:', auth.currentUser?.uid || null)
+
       try {
-        const teacherId = teacherSession.id
         const studentsQuery = query(collection(db, 'students'), where('teacherId', '==', teacherId))
         const questionsQuery = query(collection(db, 'questions'), where('teacherId', '==', teacherId))
         const resultsQuery = query(collection(db, 'results'), where('teacherId', '==', teacherId))
 
-        const [studentSnapshot, questionSnapshot, resultSnapshot] = await Promise.all([
-          getDocs(studentsQuery),
-          getDocs(questionsQuery),
-          getDocs(resultsQuery),
-        ])
+        console.log('[TEACHER REFRESH] Reading students query...')
+        let studentSnapshot
+        try {
+          studentSnapshot = await getDocs(studentsQuery)
+          console.log('[TEACHER REFRESH] Students query succeeded:', studentSnapshot.size)
+        } catch (error) {
+          console.error('[TEACHER REFRESH] Students query failed', {
+            code: error.code,
+            message: error.message,
+            teacherId,
+            authUid: auth.currentUser?.uid || null,
+          })
+          throw new Error(`Teacher student-list read failed: ${error.message}`, { cause: error })
+        }
+
+        console.log('[TEACHER REFRESH] Reading questions query...')
+        let questionSnapshot
+        try {
+          questionSnapshot = await getDocs(questionsQuery)
+          console.log('[TEACHER REFRESH] Questions query succeeded:', questionSnapshot.size)
+        } catch (error) {
+          console.error('[TEACHER REFRESH] Questions query failed', {
+            code: error.code,
+            message: error.message,
+            teacherId,
+            authUid: auth.currentUser?.uid || null,
+          })
+          throw new Error(`Teacher questions read failed: ${error.message}`, { cause: error })
+        }
+
+        console.log('[TEACHER REFRESH] Reading results query...')
+        let resultSnapshot
+        try {
+          resultSnapshot = await getDocs(resultsQuery)
+          console.log('[TEACHER REFRESH] Results query succeeded:', resultSnapshot.size)
+        } catch (error) {
+          console.error('[TEACHER REFRESH] Results query failed', {
+            code: error.code,
+            message: error.message,
+            teacherId,
+            authUid: auth.currentUser?.uid || null,
+          })
+          throw new Error(`Teacher results read failed: ${error.message}`, { cause: error })
+        }
 
         setState((previous) => ({
           ...previous,
@@ -331,7 +384,7 @@ function App() {
           results: resultSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })),
         }))
       } catch (error) {
-        console.error('Failed to load Firestore teacher data:', error)
+        console.error('[TEACHER REFRESH] Dashboard refresh failed:', error.message)
       }
     }
 
@@ -399,10 +452,12 @@ function App() {
   const handleTeacherRegister = async (event) => {
     event.preventDefault()
     setTeacherAuthError('')
+    setTeacherAuthSuccess('')
     const cleanName = teacherForm.name.trim()
     const cleanEmail = teacherForm.email.trim().toLowerCase()
 
     if (!cleanName || !cleanEmail || !teacherForm.password.trim()) {
+      setTeacherAuthError('Enter your name, email, and password.')
       return
     }
 
@@ -443,6 +498,7 @@ function App() {
         }))
         setTeacherSession(teacherProfile)
         setSelectedTeacherId(teacherProfile.id)
+        setTeacherAuthSuccess('Teacher account registered successfully. Welcome to your dashboard.')
         setTeacherForm({ name: '', email: '', password: '', school: '' })
         setActiveView('teacher')
         return
@@ -467,6 +523,7 @@ function App() {
     }))
     setTeacherSession(newTeacher)
     setSelectedTeacherId(newTeacher.id)
+    setTeacherAuthSuccess('Teacher account registered successfully. Welcome to your dashboard.')
     setTeacherForm({ name: '', email: '', password: '', school: '' })
     setActiveView('teacher')
   }
@@ -474,6 +531,7 @@ function App() {
   const handleTeacherLogin = async (event) => {
     event.preventDefault()
     setTeacherAuthError('')
+    setTeacherAuthSuccess('')
     const email = teacherLogin.email.trim().toLowerCase()
     const password = teacherLogin.password.trim()
 
@@ -498,6 +556,7 @@ function App() {
 
         setTeacherSession(profile)
         setSelectedTeacherId(profile.id)
+        setTeacherAuthSuccess('Teacher logged in successfully.')
         setTeacherLogin({ email: '', password: '' })
         setActiveView('teacher')
         return
@@ -513,11 +572,13 @@ function App() {
     )
 
     if (!account) {
+      setTeacherAuthError('No teacher account matches that email and password.')
       return
     }
 
     setTeacherSession(account)
     setSelectedTeacherId(account.id)
+    setTeacherAuthSuccess('Teacher logged in successfully.')
     setTeacherLogin({ email: '', password: '' })
     setActiveView('teacher')
   }
@@ -538,9 +599,11 @@ function App() {
   const handleStudentRegister = async (event) => {
     event.preventDefault()
     setStudentAuthError('')
+    setStudentAuthSuccess('')
     const teacherId = teacherSession?.id || studentForm.teacherId || selectedTeacherId
 
     if (!teacherId) {
+      setStudentAuthError('Select a teacher before registering the student.')
       return
     }
 
@@ -565,12 +628,21 @@ function App() {
     }
 
     if (isFirebaseReady) {
+      let registrationStep = 'student authentication account creation'
+      studentProvisioningRef.current = true
       try {
+        console.log('[ADD STUDENT] Creating student Firebase Authentication account...')
+        console.log('[ADD STUDENT] Teacher UID:', teacherId)
+        console.log('[ADD STUDENT] Primary Firebase UID before create:', auth.currentUser?.uid || null)
         const userCredential = await createUserWithEmailAndPassword(
           studentAuth,
           newStudent.email,
           newStudent.password,
         )
+        console.log('[ADD STUDENT] Student UID:', userCredential.user.uid)
+        console.log('[ADD STUDENT] Primary Firebase UID after create:', auth.currentUser?.uid || null)
+        console.log('[ADD STUDENT] Student Auth UID:', studentAuth.currentUser?.uid || null)
+
         const studentPayload = {
           uid: userCredential.user.uid,
           teacherId,
@@ -581,8 +653,16 @@ function App() {
           createdAt: new Date().toISOString(),
         }
 
+        registrationStep = 'student Firestore document creation'
+        console.log('[ADD STUDENT] Creating Firestore student document...')
+        console.log('[ADD STUDENT] Firestore path:', `students/${userCredential.user.uid}`)
+        console.log('[ADD STUDENT] Firestore request auth UID:', auth.currentUser?.uid || null)
         await setDoc(doc(db, 'students', userCredential.user.uid), studentPayload)
+        console.log('[ADD STUDENT] Student document created successfully')
+
+        console.log('[ADD STUDENT] Signing out temporary student Auth session...')
         await signOut(studentAuth)
+        console.log('[ADD STUDENT] Student Auth session cleared; primary teacher UID remains:', auth.currentUser?.uid || null)
         const storedStudent = { id: userCredential.user.uid, ...studentPayload }
 
         setState((previous) => ({
@@ -590,12 +670,25 @@ function App() {
           students: [...previous.students, storedStudent],
         }))
         setStudentForm({ fullName: '', email: '', phone: '', className: '', password: '', teacherId: '' })
+        setStudentAuthSuccess('Student account registered successfully.')
         setActiveView('teacher')
         return
       } catch (error) {
-        console.error('Student registration failed:', error)
-        setStudentAuthError(getAuthErrorMessage(error, 'Student registration failed.'))
+        console.error(`[ADD STUDENT] ${registrationStep} failed`, {
+          code: error.code,
+          message: error.message,
+          teacherUid: teacherId,
+          primaryAuthUid: auth.currentUser?.uid || null,
+          studentAuthUid: studentAuth.currentUser?.uid || null,
+        })
+        setStudentAuthError(
+          registrationStep === 'student Firestore document creation'
+            ? `Student account was created, but ${registrationStep} failed: ${getAuthErrorMessage(error, 'permission denied')}`
+            : getAuthErrorMessage(error, 'Student registration failed.'),
+        )
         return
+      } finally {
+        studentProvisioningRef.current = false
       }
     }
 
@@ -604,6 +697,7 @@ function App() {
       students: [...previous.students, newStudent],
     }))
     setStudentForm({ fullName: '', email: '', phone: '', className: '', password: '', teacherId: '' })
+    setStudentAuthSuccess('Student account registered successfully.')
     setActiveView('teacher')
   }
 
@@ -692,6 +786,7 @@ function App() {
 
     setStudentLoginLoading(true)
     setStudentAuthError('')
+    setStudentAuthSuccess('')
 
     const email = studentLogin.email.trim().toLowerCase()
     const password = studentLogin.password.trim()
@@ -748,6 +843,7 @@ function App() {
     }
 
     setStudentSession(account)
+    setStudentAuthSuccess('Student logged in successfully.')
     setAnswers({})
     setSubmissionSummary(null)
     setActiveView('student')
@@ -968,6 +1064,7 @@ function App() {
                       placeholder="School name"
                     />
                   </label>
+                  {teacherAuthError && <p className="auth-error">{teacherAuthError}</p>}
                   <button type="submit">Register teacher</button>
                 </form>
               </section>
@@ -980,6 +1077,7 @@ function App() {
                     <p className="eyebrow">Teacher workspace</p>
                     <h2>{teacherSession.name}</h2>
                     <p className="school-name">{teacherSession.school || 'EDIGIX Academy'}</p>
+                    {teacherAuthSuccess && <p className="auth-success">{teacherAuthSuccess}</p>}
                   </div>
                   <div className="intro-actions">
                     <span className="status-pill">Workspace live</span>
@@ -1066,6 +1164,7 @@ function App() {
                     />
                   </label>
                   {studentAuthError && <p className="auth-error">{studentAuthError}</p>}
+                  {studentAuthSuccess && <p className="auth-success">{studentAuthSuccess}</p>}
                   <button type="submit">Add student</button>
                 </form>
               </section>
@@ -1276,6 +1375,7 @@ function App() {
                   <p className="eyebrow">Student dashboard</p>
                   <h2>Welcome back, {studentSession.fullName.split(' ')[0]}</h2>
                   <p className="school-name">Your practice space is ready when you are.</p>
+                  {studentAuthSuccess && <p className="auth-success">{studentAuthSuccess}</p>}
                 </div>
                 <div className="intro-actions">
                   <span className="status-pill">Ready to learn</span>

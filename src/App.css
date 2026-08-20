@@ -29,20 +29,26 @@
 .topbar-nav {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .topbar-nav button,
 button {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: start;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #7c3aed;
   color: white;
-  padding: 0.8rem 1.1rem;
+  padding: 0.58rem 0.82rem;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  line-height: 1.25;
+  white-space: normal;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -50,6 +56,18 @@ button {
 button:hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 24px rgba(124, 58, 237, 0.25);
+}
+
+.hero-actions,
+.intro-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.form-card > button {
+  width: fit-content;
 }
 
 button:disabled {
@@ -175,6 +193,22 @@ button:disabled {
   background: #fef2f2;
   color: #b91c1c;
   font-size: 0.92rem;
+}
+
+.auth-success {
+  margin: 10px 0 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #b7dec7;
+  border-radius: 10px;
+  background: #effaf3;
+  color: #27704f;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.auth-error,
+.auth-success {
+  line-height: 1.4;
 }
 
 label {
@@ -363,11 +397,13 @@ textarea {
 }
 
 .option-button {
+  width: 100%;
+  justify-self: stretch;
   background: #f3f4f6;
   color: #111827;
   border: 1px solid #d1d5db;
   text-align: left;
-  padding: 0.9rem 1rem;
+  padding: 0.68rem 0.8rem;
 }
 
 .option-button.selected {
@@ -401,6 +437,8 @@ textarea {
 .submit-button {
   display: block;
   width: 100%;
+  max-width: 100%;
+  justify-self: stretch;
   margin-top: 8px;
 }
 
